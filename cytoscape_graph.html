@@ -1,0 +1,1409 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Cytoscape.js Network</title>
+  <script src="https://unpkg.com/cytoscape@3.24.0/dist/cytoscape.min.js"></script>
+  <style>
+    body {
+      background-color: black;
+      margin: 0;
+      overflow: hidden;
+    }
+    #cy {
+      width: 100%;
+      height: 100vh;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    
+    /* Attack status - bottom left */
+    #attack-status {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background-color: rgba(0,0,0,0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      max-width: 300px;
+      z-index: 1000;
+      font-family: Arial;
+      display: none;
+    }
+    
+    /* SSH Stats - top right */
+    #ssh-stats {
+      position: absolute;
+      top: 110px;  /* Below the buttons */
+      right: 20px;
+      width: 280px;
+      background-color: rgba(0,0,0,0.8);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      z-index: 1000;
+      font-family: Arial;
+      max-height: 70vh;
+      overflow-y: auto;
+      display: none;
+    }
+    
+    /* Button container - top right */
+    #button-container {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .control-button {
+      padding: 10px 15px;
+      background-color: #333;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      width: 120px;
+    }
+    
+    .status-alert {
+      animation: pulse 0.5s infinite alternate;
+    }
+    
+    @keyframes pulse {
+      from { background-color: rgba(0,0,0,0.7); }
+      to { background-color: rgba(200,0,0,0.7); }
+    }
+/* ssh */
+    @keyframes blink-attack {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+
+  </style>
+</head>
+<body>
+  <div id="cy"></div>
+  
+  <!-- Button Container (Top Right) -->
+  <div id="button-container">
+    <button id="reset-button" class="control-button">Reset Graph</button>
+    <button id="ssh-stats-toggle" class="control-button">Show SSH Stats</button>
+  </div>
+  
+  <!-- Attack Status (Bottom Left) -->
+  <div id="attack-status">
+    <h3 style="margin-top: 0">Attack Status</h3>
+    <div id="status-message">Simulation ready</div>
+  </div>
+  
+  <!-- SSH Stats Panel (Top Right, below buttons) -->
+  <div id="ssh-stats">
+    <h3 style="margin-top: 0; border-bottom: 1px solid #444; padding-bottom: 8px;">SSH Attempt Statistics</h3>
+    <div id="ssh-stats-content"></div>
+  </div>
+  <script>
+    // Load data from JSON
+    fetch('graph_data.json')
+      .then(response => response.json())
+      .then(data => {
+        const cy = cytoscape({
+          container: document.getElementById('cy'),
+          elements: [...data.nodes, ...data.edges],
+          userZooming: true,
+          userPanning: true,
+          hideEdgesOnViewport: false,
+          textureOnViewport: false,
+          layout: { 
+            name: 'cose',
+            idealEdgeLength: 150,
+            nodeOverlap: 10,
+            nodeRepulsion: 10000,
+            componentSpacing: 100,
+            nestingFactor: 5,
+          },
+          style: [
+            // Base node style
+            {
+              selector: 'node',
+              style: {
+                'label': 'data(label)',
+                'text-wrap': 'wrap',
+                'text-valign': 'center',
+                'text-halign': 'center', /* Changed from right to center for better visibility */
+                'color': '#fff',
+                'text-outline-color': '#000',
+                'text-outline-width': 2,
+                'text-opacity': 0,
+                'transition': 'text-opacity 0.2s',
+                'width': 'mapData(size, 0, 100, 20, 60)',
+                'height': 'mapData(size, 0, 100, 20, 60)',
+                'background-color': '#0074D9'
+              }
+            },
+            
+            // Node types - simplified
+            {
+              selector: 'node[type="pc"]',
+              style: {
+                'background-color': '#fffdd0',
+                'width': 15,
+                'height': 15
+              }
+            },
+            {
+              selector: 'node[type="switch"]',
+              style: {
+                'background-color': '#008080',
+                'width': 30,
+                'height': 30
+              }
+            },
+            {
+              selector: 'node[type="router"]',
+              style: {
+                'background-color': '#660033',
+                'width': 40,
+                'height': 40
+              }
+            },
+            {
+              selector: 'node[type="server"]',
+              style: {
+                'background-color': '#cb9d06',
+                'width': 60,
+                'height': 60
+              }
+            },
+            
+            {
+
+        selector: 'edge',
+        style: {
+                'width':1,
+                'line-color': '#E0E0E0',
+                'curve-style': 'bezier',
+                'label': function(ele){return 'Used: ' + ele.data('weight') + '\n' +
+                        'Cap: ' + ele.data('cap') + '\n' + 
+                        'Flow: ' + ele.data('flow')},
+                'text-opacity': 0,
+                'text-valign': 'center',
+                'text-halign': 'center',
+                'color': '#fff',
+                'text-outline-color': '#000',
+                'text-outline-width': 2,
+                'text-background-color': '#000',
+                'text-background-opacity': 0.8,
+                'text-background-padding': '4px',
+                'text-border-width': 1,
+                'text-border-color': '#cb9d06',
+                'text-wrap': 'wrap',
+                'text-max-width': '150px',
+                'font-size': '10px'// default hidden
+                }
+            },
+                {
+                    selector: 'node.highlight-pc',
+                    style: {
+                      'width': 25,
+                      'height': 25,
+                      'text-opacity': 1, // Always show label
+                      'font-size': 12
+                    }
+                  },
+                // Show labels for edges above threshold
+            {
+                    selector: 'edge[weight > 81000][source.node_type = "pc"][target.node_type = "switch"], edge[weight > 75][source.node_type = "switch"][target.node_type = "pc"]',
+                    style: {
+                    'text-opacity': 1 // Always show if weight > threshold
+                    }
+                },
+                
+            { //for dijikstra shortest path
+                selector: 'edge.shortest',
+                style: {
+                    'line-color': '#00ff00',
+                    'width': 4
+                }
+                },
+                //for dos visualisation
+                  {
+                    selector: 'edge.attack-edge',
+                    style: {
+                      'line-color': 'red',
+                      'width': 4
+                    }
+                  },
+                  {
+                    selector: 'edge.sending-edge',
+                    style: {
+                      'line-color': 'blue',
+                      'width': 4
+                    }
+                  },
+                  {
+                    selector: 'node.attack-server',
+                    style: {
+                      'background-color': 'red'
+                    }
+                  },
+                  {
+                    selector: 'node.attack-router',
+                    style: {
+                      'background-color': '#ffffff'
+                    }
+                  },
+                  {
+                    selector: 'node.attack-switch',
+                    style: {
+                      'background-color': '#ffffff'
+                    }
+                  },
+                  {
+                    selector: 'node.attack-pc',
+                    style: {
+                      'background-color': 'red'
+                    }
+                  },
+                  {
+                    selector: 'node.disconnected-pc',
+                    style: {
+                      'background-color': '#8b837e'
+                    }
+                  },
+                  {
+                    selector: 'node.blinking',
+                    style: {
+                      'background-color': 'red',
+                      'transition-property': 'background-color',
+                      'transition-duration': '0.2s'
+                    }
+                  },//for dos visualisation
+                  //for ssh
+                 {
+                    selector: '.ssh-attack-edge',
+                    style: {
+                      'line-color': '#FF8C00',
+                      'width': 3,
+                      'z-index': 999,
+                      'line-style': 'solid'
+                    }
+                  },
+                  {
+                    selector: '.compromised-node',
+                    style: {
+                      'background-color': '#FF6B6B',
+                      'border-width': 2,
+                      'border-color': '#FF0000'
+                    }
+                  },
+                  {
+                    selector: '.compromised-server',
+                    style: {
+                      'background-color': '#FF0000',
+                      'border-width': 3,
+                      'border-color': '#FFFFFF'
+                    }
+                  },
+                  {
+                    selector: '.severed-edge',
+                    style: {
+                      'line-color': '#FF0000',
+                      'line-style': 'dashed',
+                      'width': 2,
+                      'opacity': 0.5
+                    }
+                  },
+                  {//for mitm
+
+                    selector: 'node[label]',
+
+                    style: {
+
+                      'label': 'data(label)',
+
+                      'text-valign': 'center',
+
+                      'text-halign': 'center',
+
+                      'color': '#000',
+
+                      'font-size': '12px',
+
+                      'text-outline-color': '#FFF',
+
+                      'text-outline-width': '2px'
+
+                    }
+
+                  },
+
+                  {
+
+                    selector: '.suspicious-node',
+
+                    style: {
+
+                      'background-color': '#FF0000',
+
+                      'border-width': 3,
+
+                      'border-color': '#8B0000'
+
+                    }
+
+                  } ,
+
+
+
+                  {
+
+                    selector: 'edge.mitm-active',
+
+                    style: {
+
+                      'line-color': '#FFA500',  // Orange during attack
+
+                      'width': 3,
+
+                      'z-index': 999
+
+                    }
+
+                  }
+
+                  //data exfiltration
+                    
+          ]
+        });
+
+          cy.ready(() => {
+          ['pc1', 'pc23'].forEach(id => {
+            const node = cy.getElementById(id);
+            node.addClass('highlight-pc');
+          });
+        });
+
+        // Mouse event handlers as backup
+        cy.on('mouseover', 'node', function(evt) {
+          evt.target.style('text-opacity', 1);
+        });
+        
+        cy.on('mouseout', 'node', function(evt) {
+          if(!evt.target.selected()) {
+            evt.target.style('text-opacity', 0);
+          }
+        });
+        cy.on('mouseover', 'edge', function(evt) {
+          evt.target.style('text-opacity', 1);
+        });
+        
+        cy.on('mouseout', 'edge', function(evt) {
+          if(!evt.target.selected()) {
+            evt.target.style('text-opacity', 0);
+          }
+        });
+
+        function showStatus(message, isAlert = false) {
+    const statusBox = document.getElementById('attack-status');
+    const messageDiv = document.getElementById('status-message');
+    statusBox.style.display = 'block';
+    messageDiv.innerHTML = message;
+    if (isAlert) {
+        statusBox.classList.add('status-alert');
+    } else {
+        statusBox.classList.remove('status-alert');
+    }
+}
+function hideStatus() {
+    document.getElementById('attack-status').style.display = 'none';
+}
+//reset
+function resetGraphToNormal() {
+ // First, remove all current elements
+  cy.elements().remove();
+  // Recreate all original nodes
+  data.nodes.forEach(node => {
+    const nodeType = node.data.type;
+    let color = '#0074D9'; // default
+    if (nodeType === 'pc') color = '#fffdd0';
+    else if (nodeType === 'switch') color = '#008080';
+    else if (nodeType === 'router') color = '#660033';
+    else if (nodeType === 'server') color = '#cb9d06';
+    cy.add({
+      group: 'nodes',
+      data: {
+        id: node.data.id,
+        label: node.data.label,
+        type: nodeType,
+        protocol: node.data.protocol,
+        used: node.data.used,
+        ip_address: node.data.ip_address,
+        mac: node.data.mac
+      },
+      style: {
+        'background-color': color,
+        'width': nodeType === 'pc' ? 15 : 
+                nodeType === 'switch' ? 30 :
+                nodeType === 'router' ? 40 : 60,
+        'height': nodeType === 'pc' ? 15 : 
+                 nodeType === 'switch' ? 30 :
+                 nodeType === 'router' ? 40 : 60
+      }
+    });
+  });
+  // Recreate all original edges
+  data.edges.forEach(edge => {
+  const isHidden = edge.data.hidden === true;
+  cy.add({
+    group: 'edges',
+    data: {
+      id: edge.data.id,
+      source: edge.data.source,
+      target: edge.data.target,
+      label: edge.data.label || "",
+      weight: edge.data.weight || 0,
+      cap: edge.data.cap || 0,
+      flow: edge.data.flow || 0
+    },
+    style: {
+      'line-color': isHidden ? '#000000' : '#E0E0E0',
+      'width': 1
+    }
+  });
+});
+  // Reapply the original layout
+  cy.layout({
+    name: 'cose',
+    idealEdgeLength: 150,
+    nodeOverlap: 10,
+    nodeRepulsion: 10000,
+    componentSpacing: 100,
+    nestingFactor: 5,
+    animate: true,
+    animationDuration: 1000
+  }).run();
+  showStatus("✅ Graph fully restored to original state");}
+// Add this after your cy initialization
+document.getElementById('reset-button').addEventListener('click', resetGraphToNormal);
+function updateSshStatsPanel() {
+  const statsPanel = document.getElementById('ssh-stats');
+  const contentDiv = document.getElementById('ssh-stats-content');
+  // Count attempts and successes
+  const stats = {};
+  cy.nodes('[ssh_attempts > 0]').forEach(node => {
+    stats[node.id()] = {
+      attempts: node.data('ssh_attempts'),
+      compromised: node.data('compromised') || false,
+      lastTarget: node.data('last_ssh_target') || 'unknown'
+    };
+  });
+  // Generate HTML content
+  let html = '<table style="width:100%; border-collapse: collapse;">';
+  html += '<tr style="border-bottom: 1px solid #444;">' +
+          '<th>PC</th><th>Attempts</th><th>Status</th>' +
+          '</tr>';
+  Object.entries(stats).forEach(([pc, data]) => {
+    html += `
+      <tr style="border-bottom: 1px solid #333;">
+        <td>${pc}</td>
+        <td>${data.attempts}</td>
+        <td style="color: ${data.compromised ? 'red' : 'orange'}">
+          ${data.compromised ? 'Compromised' : 'Failed'}
+        </td>
+      </tr>
+    `;
+  });
+  
+  html += '</table>';
+  contentDiv.innerHTML = html;
+  statsPanel.style.display = 'block';
+}
+//ssh
+function blinkNode(node, color, times) {
+  let count = 0;
+  const interval = setInterval(() => {
+    node.style('border-color', count % 2 === 0 ? color : 'transparent');
+    count++;
+    if (count >= times * 2) {
+      clearInterval(interval);
+    }
+  }, 500);
+}
+// Call this when SSH attacks are detected
+setTimeout(() => {
+  if (data.ssh_attacks?.length > 0) {
+    updateSshStatsPanel();
+    
+    // Update panel during attack simulation
+    Object.keys(attacksBySource).forEach((source, idx) => {
+      setTimeout(() => {
+        updateSshStatsPanel();
+      }, idx * 5000 + 1000);
+    });
+  }
+}, 40000);
+// Only modify the SSH stats toggle to properly position elements
+    document.getElementById('ssh-stats-toggle').addEventListener('click', function() {
+      const panel = document.getElementById('ssh-stats');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      this.textContent = panel.style.display === 'none' ? 'Show SSH Stats' : 'Hide SSH Stats';
+    });
+
+                // Highlight Dijikstra path edges after 10 seconds
+              setTimeout(() => {
+              if (data.dijikstras) {
+                showStatus("🔍 Calculating shortest path using Dijkstra's algorithm...");
+                
+                let delay = 0;
+                data.dijikstras.forEach(([source, target], index) => {
+                  setTimeout(() => {
+                    const edge = cy.edges().filter(edge => {
+                      const src = edge.data('source');
+                      const tgt = edge.data('target');
+                      return (src === source && tgt === target) || (src === target && tgt === source);
+                    });
+                    
+                    if (edge && edge.length > 0) {
+                      edge.addClass('shortest');
+                      
+                      // Get node types for meaningful messages
+                      const sourceNode = cy.getElementById(source);
+                      const targetNode = cy.getElementById(target);
+                      const sourceType = sourceNode.data('type');
+                      const targetType = targetNode.data('type');
+                      
+                      // Generate appropriate message based on node types
+                      let message = '';
+                      if (sourceType === 'pc' && targetType === 'switch') {
+                        message = `🖥️ PC ${source} connects to switch ${target}`;
+                      } 
+                      else if (sourceType === 'switch' && targetType === 'router') {
+                        message = `🔀 Switch ${source} links to router ${target}`;
+                      }
+                      else if (sourceType === 'router' && targetType === 'router') {
+                        message = `🔄 Router ${source} peers with ${target}`;
+                      }
+                      else if (targetType === 'server') {
+                        message = `📡 Routing to server ${target}`;
+                      }
+                      else {
+                        message = `➡️ ${source} → ${target}`;
+                      }
+                      
+                      // Special message for first and last edges
+                      if (index === 0) {
+                        message = `📍 Starting path: ${message}`;
+                      }
+                      else if (index === data.dijikstras.length - 1) {
+                        message = `🏁 Destination reached: ${message}`;
+                      }
+                      
+                      showStatus(message);
+                    }
+                  }, delay);
+                  delay += 950; // Slightly faster than attack visualization
+                });
+                
+                // Final summary
+                setTimeout(() => {
+                  const pathLength = data.dijikstras.length;
+                  const firstEdge = data.dijikstras[0];
+                  const lastEdge = data.dijikstras[pathLength - 1];
+                  showStatus(`✅ Shortest path found (${pathLength} hops):\nFrom ${firstEdge[0]} to ${lastEdge[1]}`);
+                }, delay + 500);
+              }
+            }, 10000);
+
+                // After your existing setTimeout for Dijkstra's path
+              // After 15 seconds, start the dos attack visualization
+              setTimeout(() => {
+              if (data.attack_path && data.attack_state) {
+                const pathEdges = data.attack_path;
+                const pathNodes = data.attack_state.path;
+                const attackerPC = data.attack_state.attacker_pc;
+                const reversedPath = [...pathNodes].reverse();
+
+                showStatus(" DoS ATTACK INITIATED ", true);
+                showStatus(`Attacker PC ${attackerPC} begins flooding with 82k packets/sec`);
+
+                // Step 1: Animate entire path turning blue (PC → Server)
+                pathEdges.forEach(([source, target], i) => {
+                  setTimeout(() => {
+                    const edge = cy.edges().filter(edge =>
+                      (edge.data('source') === source && edge.data('target') === target) ||
+                      (edge.data('source') === target && edge.data('target') === source)
+                    );
+                    
+                    if (edge.length) {
+                      edge.addClass('sending-edge');
+                      
+                      const sourceType = cy.getElementById(source).data('type');
+                      const targetType = cy.getElementById(target).data('type');
+                      
+                      if (sourceType === 'pc' && targetType === 'switch') {
+                        showStatus(`PC ${source} flooding switch ${target} (82k packets/sec)`);
+                      } 
+                      else if (sourceType === 'switch' && targetType === 'router') {
+                        showStatus(`Switch ${source} forwarding traffic to router ${target}`);
+                      }
+                      else if (sourceType === 'router' && targetType === 'router') {
+                        showStatus(`Router ${source} routing to ${target} (BGP traffic)`);
+                      }
+                      else if (targetType === 'server') {
+                        showStatus(`Server ${target} under heavy load!`, true);
+                        
+                        // After last edge turns blue, start the red backtrack
+                        setTimeout(() => {
+                          // Step 2: Backtrack in red (Server → PC)
+                          reversedPath.forEach((nodeId, j) => {
+                            setTimeout(() => {
+                              const node = cy.getElementById(nodeId);
+                              const nodeType = node.data('type');
+                              
+                              // Color node red based on its type
+                              if (nodeType === 'pc') {
+                                node.addClass('attack-pc');
+                                showStatus(`🛑 Identified attacker: ${nodeId}`, true);
+                              } 
+                              else if (nodeType === 'server') {
+                                node.addClass('attack-server blinking');
+                              }
+                              else if (nodeType === 'router') {
+                                node.addClass('attack-router');
+                              }
+                              else if (nodeType === 'switch') {
+                                node.addClass('attack-switch');
+                              }
+
+                              // Highlight edge to next node in path (going backwards)
+                              if (j < reversedPath.length - 1) {
+                                const nextNodeId = reversedPath[j+1];
+                                const edge = cy.edges().filter(e =>
+                                  (e.data('source') === nodeId && e.data('target') === nextNodeId) ||
+                                  (e.data('source') === nextNodeId && e.data('target') === nodeId)
+                                );
+                                
+                                if (edge.length) {
+                                  edge.removeClass('sending-edge').addClass('attack-edge');
+                                }
+                              }
+                              
+                              // Final step: Disconnect attacker after full backtrack
+                              if (j === reversedPath.length - 1) {
+                                setTimeout(() => {
+                                  const pcNode = cy.getElementById(attackerPC);
+                                  pcNode.removeClass('attack-pc').addClass('disconnected-pc');
+                                  
+                                  // Remove edge from PC to switch
+                                  const pcEdges = cy.edges().filter(edge =>
+                                    edge.data('source') === attackerPC || edge.data('target') === attackerPC
+                                  );
+                                  
+                                  if (pcEdges.length) {
+                                    pcEdges.remove();
+                                    showStatus(`❌ ISOLATING ATTACKER: Disconnected PC ${attackerPC}`, true);
+                                    setTimeout(() => showStatus("✅ Attack mitigated successfully!"), 2000);
+                                  }
+                                }, 1000);
+                              }
+                            }, j * 1000); // Same delay for backtrack
+                          });
+                        }, 1000); // Short delay after last blue edge
+                      }
+                    }
+                  }, i * 1000); // Consistent delay for forward animation
+                });
+              }
+            }, 30000);
+          setTimeout(resetGraphToNormal, 50000); //reset graph to original
+//ssh
+        setTimeout(() => {
+  if (data.ssh_attacks && data.ssh_attacks.length > 0) {
+    showStatus("🚨 SSH Brute Force Attack Detected", true);
+    // Store original node states
+    const originalNodeStates = new Map();
+    cy.nodes().forEach(node => {
+      originalNodeStates.set(node.id(), {
+        color: node.style('background-color'),
+        border: node.style('border-width'),
+        borderColor: node.style('border-color')
+      });
+    });
+
+    // Group attacks by source PC
+    const attacksBySource = {};
+    data.ssh_attacks.forEach(attack => {
+      if (!attacksBySource[attack.source]) {
+        attacksBySource[attack.source] = {
+          attempts: 0,
+          successful: 0,
+          target: attack.target,
+          pathEdges: []
+        };
+      }
+      attacksBySource[attack.source].attempts++;
+      if (attack.success) attacksBySource[attack.source].successful++;
+    });
+
+    // Animate each attacker
+    Object.keys(attacksBySource).forEach((source, idx) => {
+      setTimeout(() => {
+        const attacker = cy.getElementById(source);
+        const target = cy.getElementById(attacksBySource[source].target);
+        const attackInfo = attacksBySource[source];
+
+        // Highlight attacker PC (will stay highlighted until final result)
+        attacker.style({
+          'background-color': '#FF4500',
+          'border-width': 3,
+          'border-color': '#8B0000'
+        });
+
+        showStatus(`🔓 ${source} attempting SSH brute force (${attackInfo.attempts} attempts)`);
+
+        try {
+          // Find and store attack path
+          const dijkstra = cy.elements().dijkstra(attacker);
+          const path = dijkstra.pathTo(target);
+          const pathNodes = path.nodes();
+          attackInfo.pathEdges = path.edges().toArray();
+
+          // Make entire attack path orange immediately
+          attackInfo.pathEdges.forEach(edge => {
+            const cyEdge = cy.getElementById(edge.data('id'));
+            cyEdge.addClass('ssh-attack-edge');
+            cyEdge.style({
+              'line-color': '#FF8C00',
+              'width': 3,
+              'z-index': 999
+            });
+          });
+
+          // Track attack completion
+          let attackCompleted = false;
+
+          // Visualize each attempt with blinking effect
+          let attemptCount = 0;
+              const maxAttempts = 25;
+              const actualAttempts = Math.min(attackInfo.attempts, maxAttempts);
+              const attemptInterval = setInterval(() => {
+              if (attemptCount >= actualAttempts) {
+              clearInterval(attemptInterval);
+              
+              // After all attempts, determine result
+              setTimeout(() => {
+                attackCompleted = true;
+                
+                if (attackInfo.successful) {
+                  // Successful attack - mark nodes as compromised
+                  pathNodes.forEach(node => node.addClass('compromised-node'));
+                  target.addClass('compromised-server');
+                  
+                  // Find and cut the edge connecting to server
+                  const serverEdge = attackInfo.pathEdges.find(edge => 
+                    edge.data('source') === target.id() || edge.data('target') === target.id()
+                  );
+                  
+                  if (serverEdge) {
+                    const edgeToCut = cy.getElementById(serverEdge.data('id'));
+                    edgeToCut.addClass('severed-edge');
+                    setTimeout(() => {
+                      cy.remove(edgeToCut);
+                      showStatus(`🔪 Severed attack path to ${target.id()} | 💀 SUCCESS: ${source} compromised server`, true);
+                    }, 1000);
+                  }
+                } else {
+                  // Failed attack - keep path orange but show failure
+                  showStatus(`❌ ${source} failed to compromise ${target.id()}`, true);
+                }
+
+                // Restore attacker color after showing final message
+                setTimeout(() => {
+                  const original = originalNodeStates.get(source);
+                  attacker.style({
+                    'background-color': original.color,
+                    'border-width': original.border,
+                    'border-color': original.borderColor
+                  });
+                  
+                  // Keep attack path visible but stop blinking
+                  attackInfo.pathEdges.forEach(edge => {
+                    const cyEdge = cy.getElementById(edge.data('id'));
+                    cyEdge.removeClass('ssh-attack-edge');
+                    if (!attackInfo.successful) {
+                      cyEdge.style({
+                        'line-color': '#FF8C00',
+                        'width': 2,
+                        'opacity': 0.7
+                      });
+                    }
+                  });
+                }, 2000);
+              }, 1000);
+              return;
+            }
+
+            // Blink the entire attack path during attempts
+            attackInfo.pathEdges.forEach(edge => {
+              const cyEdge = cy.getElementById(edge.data('id'));
+              cyEdge.style('opacity', attemptCount % 2 === 0 ? 1 : 0.3);
+            });
+            
+            attemptCount++;
+          }, 500); // Blink speed
+
+        } catch (e) {
+          console.error("Path error:", e);
+        }
+      }, idx * 8000); // Stagger attackers
+    });
+
+    // Final status (only after all attacks complete)
+    setTimeout(() => {
+      const successCount = Object.values(attacksBySource).filter(a => a.successful > 0).length;
+      if (successCount > 0) {
+        showStatus(`🚨  Server3 compromised!`, true);
+      } else {
+        showStatus("✅ All SSH attacks were unsuccessful");
+      }
+    }, Object.keys(attacksBySource).length * 8000 + 5000);
+  }
+}, 55000);
+
+setTimeout(resetGraphToNormal, 105000); //reset graph to original
+
+        // DDoS Attack Simulation
+setTimeout(() => {
+  if (data.ddos_attack_paths) {
+    showStatus("🚨 DDoS ATTACK DETECTED", true);
+
+    // Store original styles
+    const originalStyles = {
+      nodes: new Map(),
+      edges: new Map()
+    };
+    
+    // Store original node styles
+    cy.nodes().forEach(node => {
+      originalStyles.nodes.set(node.id(), {
+        'background-color': node.style('background-color'),
+        'border-color': node.style('border-color')
+      });
+    });
+    
+    // Store original edge styles
+    cy.edges().forEach(edge => {
+      originalStyles.edges.set(edge.id(), {
+        'line-color': edge.style('line-color'),
+        'width': edge.style('width')
+      });
+    });
+
+    // Get attacker PCs
+    const attackerPCs = Object.keys(data.ddos_attack_paths);
+    if (!attackerPCs || attackerPCs.length === 0) {
+      console.error("No attackers found in ddos_attack_paths");
+      return;
+    }
+
+    // PHASE 1: Highlight attackers and server
+    attackerPCs.forEach(pc => {
+      const attackerNode = cy.getElementById(pc);
+      if (attackerNode) {
+        attackerNode.style({
+          'background-color': '#FF4D00',
+          'border-width': 3,
+          'border-color': '#8B0000'
+        });
+      }
+    });
+    
+    const server = cy.getElementById('server1');
+    if (server) {
+      server.addClass('attack-server');
+    }
+    showStatus(`🔴 ${attackerPCs.length} ATTACKERS ACTIVATED | SERVER UNDER ATTACK`, true);
+
+    // PHASE 2: Highlight attack paths
+    setTimeout(() => {
+      const attackEdges = new Set();
+      
+      attackerPCs.forEach((pc, pcIdx) => {
+        setTimeout(() => {
+          const path = data.ddos_attack_paths[pc];
+          if (!path) return;
+          
+          showStatus(`📡 Tracing attack path from ${pc}`, true);
+          
+          path.forEach((node, i) => {
+            setTimeout(() => {
+              if (i < path.length - 1) {
+                const edge = cy.edges().filter(e => 
+                  (e.data('source') === path[i] && e.data('target') === path[i+1]) ||
+                  (e.data('source') === path[i+1] && e.data('target') === path[i])
+                );
+                
+                if (edge.length > 0) {
+                  edge.style({
+                    'line-color': '#FF4D00',
+                    'width': 4,
+                    'z-index': 999
+                  });
+                  attackEdges.add(edge[0].id());
+                }
+              }
+            }, i * 300);
+          });
+        }, pcIdx * 800);
+      });
+
+      // Phase 3: Show BFS tree after all paths are shown
+      setTimeout(() => {
+        showStatus("🌳 BUILDING BFS TREE FROM SERVER", true);
+        
+        // First make all non-attack edges semi-transparent
+        cy.edges().forEach(edge => {
+          if (!attackEdges.has(edge.id())) {
+            edge.style('opacity', 0.2);
+          }
+        });
+
+        // First make all non-attack nodes semi-transparent
+        cy.nodes().forEach(node => {
+    if (!data.bfs_server1.nodes.includes(node.id())) {
+      node.style('opacity', 0.2);
+    }
+  });
+        
+        // Highlight BFS tree
+        if (data.bfs_server1 && data.bfs_server1.edges) {
+          data.bfs_server1.edges.forEach(([source, target]) => {
+            setTimeout(() => {
+              const edge = cy.edges().filter(e => 
+                (e.data('source') === source && e.data('target') === target) ||
+                (e.data('source') === target && e.data('target') === source)
+              );
+              
+              if (edge.length > 0) {
+                edge.style({
+                  'line-color': '#800000',
+                  'width': 3,
+                  'opacity': 1,
+                  'z-index': 999
+                });
+              }
+            }, 100);
+          });
+          
+        }
+// Phase 4: Trace back and isolate attackers
+        setTimeout(() => {
+          showStatus("🔍 ISOLATING ATTACKERS", true);
+          
+          // First fade non-BFS elements
+          cy.elements().forEach(el => {
+            const isInBFS = data.bfs_server1.nodes.includes(el.id()) || 
+                           data.bfs_server1.edges.some(([s,t]) => 
+                             (el.data('source') === s && el.data('target') === t) ||
+                             (el.data('source') === t && el.data('target') === s))
+            
+            if (!isInBFS) {
+              el.style('opacity', 0.1);
+            }
+          });
+          
+          // Isolate each attacker
+          attackerPCs.forEach((pc, idx) => {
+            setTimeout(() => {
+              const path = data.ddos_attack_paths[pc];
+              
+              // Highlight path from server to attacker
+              for (let i = path.length - 1; i > 0; i--) {
+                setTimeout(() => {
+                  const edge = cy.edges().filter(e => 
+                    (e.data('source') === path[i] && e.data('target') === path[i-1]) ||
+                    (e.data('source') === path[i-1] && e.data('target') === path[i])
+                  );
+                  
+                  if (edge.length > 0) {
+                    edge.style('line-color', '#FFFFFF');
+                    
+                    // Cut PC-switch connection
+                    if (i === 1) {
+                      setTimeout(() => {
+                        edge.remove();
+                        showStatus(`✂️ ISOLATED ${pc}`, true);
+                        
+                        // Restore PC color
+                        const original = originalStyles.nodes.get(pc);
+                        cy.getElementById(pc).style({
+                          'background-color': original['background-color'],
+                          'border-color': original['border-color']
+                        });
+                      }, 500);
+                    }
+                  }
+                }, (path.length - 1 - i) * 300);
+              }
+            }, idx * 1500);
+          });
+          
+          // Final cleanup
+          setTimeout(() => {
+            server.removeClass('blinking');
+            showStatus("✅ DDoS MITIGATED - NETWORK SECURE", true);
+          }, attackerPCs.length * 1500 + 1000);
+        }, 3000);
+      }, attackerPCs.length * 800 + 2000);
+    }, 2000);
+  }
+}, 115000);
+
+setTimeout(resetGraphToNormal, 205000); //reset graph to original
+//Man In The Middle (mitm)
+//MITM Attack Simulation
+setTimeout(() => {
+  if (data.mitm_path) {
+    // ===== PHASE 1: Initial Attack Setup (0s) =====
+    showStatus("🕵️ PHASE 1: MITM ATTACK INITIATED (pc27 activating)", true);
+
+    // Highlight attacker and victim
+    const attacker = cy.getElementById('pc27');
+    attacker.style({
+      'background-color': '#FF0000',
+      'width': 30,
+      'height': 30,
+      'z-index': 999,
+      'label': 'pc27\n192.168.10.51(real ip)\n192.168.10.110(victim ip)\n192.168.10.5(server ip)'
+    });
+
+    const victim = cy.getElementById('pc86');
+    victim.style({
+      'background-color': '#0000FF',
+      'width': 20,
+      'height': 20,
+      'z-index': 999,
+      'label': 'pc86\n192.168.10.110'
+    });
+
+    // Show hidden MITM edges
+    cy.edges('[hidden = "true"]').style({
+      'line-color': '#FFA500',
+      'width': 3,
+      'events': 'yes',
+      'line-style': 'solid',
+      'opacity': 1
+    });
+
+    // ===== PHASE 2: ARP Flood (5s later) =====
+    setTimeout(() => {
+      showStatus("📢 PHASE 2: pc86 FLOODING NETWORK WITH ARP REQUESTS", true);
+      cy.edges().style('line-color', '#00FF00');
+
+      // ===== PHASE 3: ARP Responses (10s total) =====
+      setTimeout(() => {
+        showStatus("🔄 PHASE 3: ARP RESPONSES SENT (pc27's response arrived first)", true);
+        
+        // Reset normal edges
+        cy.edges().not('[hidden = "true"]').style('line-color', '#E0E0E0');
+
+        // Highlight attack paths in blue
+        const victimPath = data.mitm_path;
+        for (let i = 0; i < victimPath.length - 1; i++) {
+          cy.edges().filter(e =>
+            (e.data('source') === victimPath[i] && e.data('target') === victimPath[i+1]) ||
+            (e.data('source') === victimPath[i+1] && e.data('target') === victimPath[i])
+          ).style({
+            'line-color': '#0000FF',
+            'width': 3
+          });
+        }
+
+        // Highlight direct attacker-victim connection
+        cy.edges().filter(e =>
+          (e.data('source') === 'pc27' && e.data('target') === 'pc86') ||
+          (e.data('source') === 'pc86' && e.data('target') === 'pc27')
+        ).style({
+          'line-color': '#0000FF',
+          'width': 3
+        });
+
+        cy.getElementById('server4').style('label', 'server4\n192.168.10.5');
+
+        // ===== PHASE 4: Traffic Rerouting (15s total) =====
+        setTimeout(() => {
+          showStatus("💀 PHASE 4: TRAFFIC NOW ROUTED THROUGH ATTACKER", true);
+
+          // Get victim's original switch connection
+          const victimSwitchEdge = cy.edges().filter(e =>
+            (e.data('source') === 'pc86' && e.data('target').startsWith('switch')) ||
+            (e.data('source').startsWith('switch') && e.data('target') === 'pc86')
+          );
+
+          // Keep original connection visible but normal
+          victimSwitchEdge.style({
+            'line-color': '#E0E0E0',
+            'width': 2,
+            'opacity': 1,
+            'z-index': 0
+          });
+
+          const victimSwitch = victimSwitchEdge[0] && victimSwitchEdge[0].data('source').startsWith('switch') ?
+            victimSwitchEdge[0].data('source') : victimSwitchEdge[0].data('target');
+
+          // Highlight MITM rerouting path (thick green)
+          cy.edges().filter(e =>
+            (e.data('source') === 'pc86' && e.data('target') === 'pc27') ||
+            (e.data('source') === 'pc27' && e.data('target') === 'pc86')
+          ).style({
+            'line-color': '#00FF00',
+            'width': 5,
+            'z-index': 999
+          });
+
+          cy.edges().filter(e =>
+            (e.data('source') === 'pc27' && e.data('target') === victimSwitch) ||
+            (e.data('source') === victimSwitch && e.data('target') === 'pc27')
+          ).style({
+            'line-color': '#00FF00',
+            'width': 5,
+            'z-index': 999
+          });
+
+          // Highlight path from switch to server4 (excluding pc86 connection)
+          const fullPath = data.mitm_path;
+          for (let i = 0; i < fullPath.length - 1; i++) {
+            const src = fullPath[i], tgt = fullPath[i + 1];
+            if ((src === 'pc86' && tgt === victimSwitch) || (tgt === 'pc86' && src === victimSwitch)) continue;
+
+            cy.edges().filter(e =>
+              (e.data('source') === src && e.data('target') === tgt) ||
+              (e.data('source') === tgt && e.data('target') === src)
+            ).style({
+              'line-color': '#00FF00',
+              'width': 5,
+              'z-index': 999
+            });
+          }
+
+          showStatus(`🔄 TRAFFIC ROUTE: pc86 → pc27 → ${victimSwitch} → ... → server4`, true);
+
+          setTimeout(() => {
+            showStatus("🔍 PHASE 5: ANALYZING NETWORK TRAFFIC PATTERNS", true);
+
+            if (data.bfs_server1) {
+              const highDegreeNodes = new Set();
+
+              // Animate BFS traversal
+              data.bfs_server1.edges.forEach(([source, target], index) => {
+                setTimeout(() => {
+                  const edge = cy.edges().filter(e =>
+                    (e.data('source') === source && e.data('target') === target) ||
+                    (e.data('source') === target && e.data('target') === source)
+                  );
+                  edge.style({
+                    'line-color': '#800000',
+                    'width': 3
+                  });
+
+                  // Color nodes white during traversal
+                  [source, target].forEach(nodeId => {
+                    const node = cy.getElementById(nodeId);
+                    node.style('background-color', '#FFFFFF');
+                    
+                    // Mark high-degree PCs
+                    if (node.data('type') === 'pc' && node.degree() > 2) {
+                      highDegreeNodes.add(nodeId);
+                      node.style('background-color', '#964B00'); // Brown for suspicious
+                    }
+                  });
+                }, index * 200); // Reduced from 500ms to 200ms per edge
+              });
+
+              // ===== PHASE 6: Isolation (after BFS completes) =====
+              setTimeout(() => {
+                showStatus("✂️ PHASE 6: ISOLATING SUSPICIOUS NODES", true);
+                // Isolate suspicious nodes
+                highDegreeNodes.forEach(nodeId => {
+                  const node = cy.getElementById(nodeId);
+                  node.connectedEdges().forEach(edge => {
+                    edge.style('line-color', '#FF0000');
+                    setTimeout(() => cy.remove(edge), 1000);
+                  });
+                  showStatus(`✂️ ISOLATED SUSPICIOUS NODE ${nodeId}`, true);
+                });
+
+                // ===== PHASE 7: Firewall Protection (9s total) =====
+                setTimeout(() => {
+                  showStatus("🛡️ PHASE 7: ADDING FIREWALL PROTECTION", true);
+                  // Add green firewall borders to high-degree nodes
+                  const overloadedNodes = cy.nodes().filter(node => node.degree() > 8);
+                  overloadedNodes.forEach(node => {
+                    node.style({
+                      'border-width': 3,
+                      'background-color': '#00FF00',
+                      'border-style': 'solid'
+                    });
+                    showStatus(`🛡️ FIREWALL ADDED TO IMPORTANT NODES`, true);
+                  });
+                  
+                  if (overloadedNodes.length === 0) {
+                    showStatus("✅ NO OVERLOADED NODES DETECTED", true);
+                  }
+                }, 2000); // Wait 2s after isolation (reduced from longer delay)
+              }, data.bfs_server1.edges.length * 200); // Reduced from 500ms to 200ms per edge
+            }
+          }, 2000); // Reduced from 10000 to 2000 (2s after rerouting)
+        }, 5000); // Wait 5s after ARP responses
+      }, 5000); // Wait 5s after ARP flood
+    }, 5000); // Wait 5s after initial setup
+  }
+}, 215000); // Start simulation after 30 seconds
+
+setTimeout(resetGraphToNormal, 305000); //reset graph to original
+//data exfiltration
+setTimeout(() => {
+  const exfilNode = 'pc_exfil';
+  const exfilTarget = 'pc100';
+  const bfsNodes = data.bfs_server1.nodes;
+  const bfsEdges = data.bfs_server1.edges;
+
+  // Step 1: Initial setup - reveal exfil node
+  cy.getElementById(exfilNode).style({
+    'background-color': 'orange',
+    'border-color': '#000',
+    'border-width': 2,
+    'width': 20,
+    'height': 20,
+    'opacity': 1,
+    'label': 'pc\n203.15.10.45'
+  });
+
+  cy.getElementById(exfilTarget).style({
+    'label': 'pc100\n192.168.10.96'
+  });
+
+  const exfilEdge = cy.edges().filter(e =>
+    (e.data('source') === exfilNode && e.data('target') === exfilTarget) ||
+    (e.data('source') === exfilTarget && e.data('target') === exfilNode)
+  );
+
+  exfilEdge.style({
+    'line-color': '#E0E0E0',
+    'line-style': 'dashed',
+    'width': 2,
+    'opacity': 1,
+    'z-index': 999
+  });
+
+  showStatus('⚠️ New unknown device connects to PC100');
+  // Step 2: Data exfiltration animation
+  setTimeout(() => {
+    exfilEdge.style({
+      'line-color': '#0000FF',
+      'line-style': 'dashed',
+      'width': 3
+    });
+    showStatus('📡 Data being exfiltrated from PC100 to unknown device...');
+    // Step 3: Network scan with coordinated node+edge highlighting
+    setTimeout(() => {
+      showStatus('🔍 Scanning network from server1...');
+      // First reset all nodes to scanning state (yellow)
+      bfsNodes.forEach(nodeId => {
+        const node = cy.getElementById(nodeId);
+        if (node) node.style();
+      });
+      // Animate BFS path with coordinated node+edge highlighting
+      let currentPath = [];
+      const animationDelay = 300; // ms between steps
+      // Process BFS edges in order
+      bfsEdges.forEach(([source, target], index) => {
+        setTimeout(() => {
+          // Highlight edge
+          const edge = cy.edges().filter(e =>
+            (e.data('source') === source && e.data('target') === target) ||
+            (e.data('source') === target && e.data('target') === source)
+          ).style({
+            'line-color': '#800000',
+            'width': 3,
+            'z-index': 999
+          });
+
+          // Process both nodes
+          [source, target].forEach(nodeId => {
+            const node = cy.getElementById(nodeId);
+            if (!node) return;
+            if (nodeId === exfilNode) {
+              // Found the exfil node - mark as malicious
+              node.style({
+                'background-color': '#964B00',
+                'border-width': 3,
+                'border-color': '#FF0000'
+              });
+              showStatus(`🚨 ALERT: External device detected (${nodeId})`, true);
+              currentPath.forEach(n => cy.getElementById(n).style('background-color', '#FFCCCB'));
+            } else if (!currentPath.includes(nodeId)) {
+              // Normal node in path
+              node.style('background-color', '#FFFFFF');
+              currentPath.push(nodeId);
+              showStatus(`✓ Scanning path through ${nodeId}...`);
+            }
+          });
+          // Special handling when reaching exfil node
+          if ([source, target].includes(exfilNode)) {
+            // Highlight entire path to exfil node in red
+            currentPath.concat([exfilNode]).forEach((nodeId, i) => {
+              setTimeout(() => {
+                cy.getElementById(nodeId).style('background-color', '#FF9999');
+              }, i * 100);
+            });
+          }
+        }, index * animationDelay);
+      });
+      // Step 4: Isolation after scan completes
+      const scanDuration = bfsEdges.length * animationDelay;
+      setTimeout(() => {
+        const maliciousNode = cy.getElementById(exfilNode);
+        if (maliciousNode) {
+          showStatus('⛔ ISOLATING MALICIOUS DEVICE...', true);
+          
+          // Pulse the malicious node
+          maliciousNode.style({
+            'background-color': '#FF0000',
+            'border-width': 4,
+            'border-color': '#000'
+          });
+          // Animate edge disconnections
+          maliciousNode.connectedEdges().forEach((edge, i) => {
+            setTimeout(() => {
+              edge.style({
+                'line-color': '#FF0000',
+                'width': 4,
+                'line-style': 'dotted'
+              });
+              setTimeout(() => cy.remove(edge), 800);
+            }, i * 500);
+          });
+          showStatus(`✅ REMOVED ${exfilNode} FROM NETWORK`, true);
+        }
+      }, scanDuration + 1000);
+    }, 6000); // Start scan after exfiltration animation
+  }, 6000); // Start exfiltration after initial delay
+}, 315000); // Initial start delay
+
+                })
+      .catch(error => {
+        console.error('Error loading graph data:', error);
+        document.getElementById('cy').innerHTML = 
+          '<div style="color:white;padding:20px">Error loading graph. Check console.</div>';
+      });
+  </script>
+</body>
+</html>
